@@ -1,129 +1,120 @@
 import streamlit as st
 import openpyxl
 from openpyxl.styles import PatternFill, Font, Alignment
-import PyPDF2
-import re
 import io
 
-st.set_page_config(page_title="Mapa de Cotação Automático", page_icon="🏗️")
+# Configuração da página para ecrã inteiro
+st.set_page_config(page_title="Mapa de Cotação Definitivo", page_icon="🏗️", layout="wide")
 
-st.title("🏗️ Gerador de Mapa de Cotação")
-st.write("Anexe o seu modelo (já com o cabeçalho preenchido se preferir) e os orçamentos.")
+st.title("🏗️ Gerador de Mapa de Cotação - Completo")
+st.write("Preencha todos os campos do orçamento. O aplicativo respeitará 100% da estrutura da sua planilha.")
 
-# Função de extração de valores do PDF
-def extrair_dados_pdf(pdf_file):
-    try:
-        leitor = PyPDF2.PdfReader(pdf_file)
-        texto = ""
-        for pagina in leitor.pages:
-            texto += pagina.extract_text() + "\n"
-        
-        linhas = [linha for linha in texto.split('\n') if linha.strip()]
-        nome_sugerido = linhas[0][:30] if linhas else pdf_file.name
-        
-        padrao_moeda = r'(\d{1,3}(?:\.\d{3})*,\d{2})'
-        valores = re.findall(padrao_moeda, texto)
-        
-        maior_valor = 0.0
-        if valores:
-            valores_num = [float(v.replace('.', '').replace(',', '.')) for v in valores]
-            maior_valor = max(valores_num)
-            
-        return nome_sugerido.upper(), maior_valor
-    except Exception:
-        return pdf_file.name.upper(), 0.0
+# 1. Upload do Modelo
+st.subheader("1. Modelo Excel")
+modelo_excel = st.file_uploader("Anexe o Modelo (MPC - Modelo.xlsx)", type=["xlsx"])
 
-# 1. Uploads
-modelo_excel = st.file_uploader("1. Anexe o Modelo Excel (Ex: MPC - Modelo.xlsx)", type=["xlsx"])
-fornecedores_pdfs = st.file_uploader("2. Anexe os PDFs dos Fornecedores (Máx 3)", type=["pdf"], accept_multiple_files=True)
+st.divider()
 
-# 2. Dados Manuais Opcionais (Caso a planilha base esteja em branco)
-st.markdown("### Dados da Cotação (Opcional)")
-st.write("Se o seu Excel já estiver preenchido com o material e quantidade, pode deixar isto em branco.")
-col_mat, col_qtd = st.columns([3, 1])
+# 2. Dados Globais da Cotação
+st.subheader("2. Dados do Material Cotado")
+col_mat, col_unid, col_qtd = st.columns([3, 1, 1])
 with col_mat:
-    nome_material = st.text_input("Qual é o material/serviço sendo cotado?")
+    nome_material = st.text_input("Nome do Material (Ex: TUBOS DE ESGOTO 300MM)")
+with col_unid:
+    unidade = st.text_input("Unid. Medida (Ex: Unid., VB, Pct, M)", value="Unid.")
 with col_qtd:
-    quantidade_item = st.number_input("Quantidade", value=1, min_value=1)
+    quantidade = st.number_input("Quantidade", value=1.0, min_value=0.01)
 
-if modelo_excel and fornecedores_pdfs:
-    st.subheader("Verifique os Dados Extraídos")
-    
-    dados_fornecedores = []
-    
-    for i, pdf in enumerate(fornecedores_pdfs[:3]):
-        nome_ext, valor_ext = extrair_dados_pdf(pdf)
-        
-        st.markdown(f"**Fornecedor {i+1} (Arquivo: {pdf.name})**")
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            nome_final = st.text_input(f"Nome do Fornecedor {i+1}", value=nome_ext, key=f"nome_{i}")
-        with col2:
-            valor_final = st.number_input(f"Valor Unitário (R$) {i+1}", value=float(valor_ext), format="%.2f", key=f"val_{i}")
-            
-        dados_fornecedores.append({"nome": nome_final.upper(), "valor": valor_final})
-        st.divider()
+st.divider()
 
-    if st.button("Gerar Planilha Final (EXATA)"):
+# 3. Dados dos Fornecedores (Lado a Lado)
+st.subheader("3. Dados dos Fornecedores")
+fornecedores = []
+cols_forn = st.columns(3)
+
+for i in range(3):
+    with cols_forn[i]:
+        st.markdown(f"### Fornecedor {i+1}")
+        nome = st.text_input("Nome da Empresa", key=f"nome_{i}")
+        valor = st.number_input("Valor Unitário (R$)", value=0.0, format="%.2f", key=f"val_{i}")
+        frete = st.text_input("Frete (Ex: CIF, FOB, Incluso)", key=f"frete_{i}")
+        pagamento = st.text_input("Condição de Pagto (Ex: 15 Dias)", key=f"pagto_{i}")
+        prazo = st.text_input("Prazo de Entrega (Ex: 10 Dias)", key=f"prazo_{i}")
+        
+        fornecedores.append({
+            "nome": nome,
+            "valor": valor,
+            "frete": frete,
+            "pagamento": pagamento,
+            "prazo": prazo
+        })
+
+st.divider()
+
+# 4. Geração do Excel
+if st.button("Gerar Planilha Final", type="primary", use_container_width=True):
+    if not modelo_excel:
+        st.error("ERRO: Por favor, anexe o modelo Excel no Passo 1.")
+    elif not nome_material:
+        st.error("ERRO: Por favor, preencha o Nome do Material no Passo 2.")
+    else:
         try:
             wb = openpyxl.load_workbook(modelo_excel)
             ws = wb.active
             
-            # Formatação de Contabilidade exata que o Excel usa
             formato_moeda = '_-"R$"* #,##0.00_-;\-"R$"* #,##0.00_-;_-"R$"* "-"??_-;_-@_-'
             
-            # Preencher Nome do Material e Quantidade se o utilizador tiver digitado no site
-            if nome_material:
-                ws.cell(row=2, column=5, value=nome_material.upper()) # Cabeçalho
-                ws.cell(row=8, column=2, value=nome_material.upper()) # Tabela Item
-            if quantidade_item > 1:
-                ws.cell(row=8, column=4, value=quantidade_item) # Quantidade Tabela
+            # 1. Preencher Cabeçalho e Dados do Item
+            ws.cell(row=2, column=5, value=nome_material.upper())
+            ws.cell(row=8, column=2, value=nome_material.upper())
+            ws.cell(row=8, column=3, value=unidade)
+            ws.cell(row=8, column=4, value=quantidade)
             
-            # Encontrar o menor preço para destacar
-            valores = [f['valor'] for f in dados_fornecedores if f['valor'] > 0]
-            menor_preco = min(valores) if valores else 0
+            # Descobrir menor preço válido
+            valores_validos = [f['valor'] for f in fornecedores if f['valor'] > 0]
+            menor_preco = min(valores_validos) if valores_validos else 0
             
-            # Colunas dos fornecedores no modelo
-            # Forn 1: Nome=G2, Unit=G8, Total=H8
-            # Forn 2: Nome=I2, Unit=I8, Total=J8
-            # Forn 3: Nome=K2, Unit=K8, Total=L8
-            colunas_fornecedores = [
-                {'nome': 7, 'unit': 7, 'total': 8},
-                {'nome': 9, 'unit': 9, 'total': 10},
-                {'nome': 11, 'unit': 11, 'total': 12}
-            ]
+            # Mapeamento: F1 (G/H), F2 (I/J), F3 (K/L)
+            mapa_colunas = [{'base': 7}, {'base': 9}, {'base': 11}]
             
-            for i, fornecedor in enumerate(dados_fornecedores):
-                cols = colunas_fornecedores[i]
+            for i, forn in enumerate(fornecedores):
+                col_unit = mapa_colunas[i]['base']
+                col_tot = col_unit + 1
+                letra_unit = openpyxl.utils.get_column_letter(col_unit)
+                letra_tot = openpyxl.utils.get_column_letter(col_tot)
                 
-                # 1. Preenche Nome do Fornecedor na linha 2
-                ws.cell(row=2, column=cols['nome'], value=fornecedor['nome'])
+                # Nome Fornecedor
+                if forn['nome']:
+                    ws.cell(row=2, column=col_unit, value=forn['nome'].upper())
                 
-                # 2. Preenche Preço Unitário na linha 8 e aplica formatação de moeda
-                celula_unit = ws.cell(row=8, column=cols['unit'])
-                celula_unit.value = fornecedor['valor']
-                celula_unit.number_format = formato_moeda
-                
-                # 3. CRUCIAL: Insere a fórmula de TOTAL multiplicando pela Quantidade (D8)
-                letra_col_unit = openpyxl.utils.get_column_letter(cols['unit'])
-                celula_total = ws.cell(row=8, column=cols['total'])
-                celula_total.value = f"=D8*{letra_col_unit}8"
-                celula_total.number_format = formato_moeda
-                
-                # 4. Destacar Vencedor a Verde (Exatamente como no seu exemplo)
-                if fornecedor['valor'] == menor_preco and fornecedor['valor'] > 0:
-                    # Verde Claro Padrão do Excel (Index 9 no preenchimento do Openpyxl)
-                    green_fill = PatternFill(start_color="92D050", end_color="92D050", fill_type="solid")
-                    font_winner = Font(color="006100", bold=True)
+                # Preços e Fórmulas
+                if forn['valor'] > 0:
+                    c_unit = ws.cell(row=8, column=col_unit, value=forn['valor'])
+                    c_unit.number_format = formato_moeda
                     
-                    celula_unit.fill = green_fill
-                    celula_unit.font = font_winner
+                    # Fórmula de Total (Quantidade * Unitário)
+                    c_tot = ws.cell(row=8, column=col_tot, value=f"=D8*{letra_unit}8")
+                    c_tot.number_format = formato_moeda
                     
-                    celula_total.fill = green_fill
-                    celula_total.font = font_winner
-
-            # Área de Anexos adicionada 15 linhas abaixo do fim dos itens para não estragar nada
+                    # Subtotal (Linha 9) e Total Final (Linha 17)
+                    ws.cell(row=9, column=col_tot, value=f"=SUM({letra_tot}8:{letra_tot}8)").number_format = formato_moeda
+                    ws.cell(row=17, column=col_tot, value=f"={letra_tot}9").number_format = formato_moeda
+                    
+                    # Informações Complementares
+                    if forn['frete']: ws.cell(row=13, column=col_unit, value=forn['frete'].upper())
+                    if forn['pagamento']: ws.cell(row=14, column=col_unit, value=forn['pagamento'].upper())
+                    if forn['prazo']: ws.cell(row=15, column=col_unit, value=forn['prazo'].upper())
+                    
+                    # Destacar Vencedor a Verde
+                    if forn['valor'] == menor_preco:
+                        green_fill = PatternFill(start_color="92D050", end_color="92D050", fill_type="solid")
+                        font_winner = Font(color="006100", bold=True)
+                        c_unit.fill = green_fill
+                        c_unit.font = font_winner
+                        c_tot.fill = green_fill
+                        c_tot.font = font_winner
+            
+            # 5. Criar Área de Anexos no final da folha
             linha_anexos = 24
             ws.merge_cells(start_row=linha_anexos, start_column=2, end_row=linha_anexos, end_column=12)
             header = ws.cell(row=linha_anexos, column=2, value="ÁREA DE ANEXOS - ORÇAMENTOS ORIGINAIS")
@@ -138,8 +129,13 @@ if modelo_excel and fornecedores_pdfs:
             wb.save(output)
             output.seek(0)
             
-            st.success("Planilha EXACTA gerada com sucesso!")
-            st.download_button(label="📥 Baixar Planilha Final", data=output, file_name="MPC_Finalizado.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+            st.success("✅ Planilha gerada com sucesso e com todos os dados!")
+            st.download_button(
+                label="📥 Baixar Planilha Final (Perfeita)", 
+                data=output, 
+                file_name="MPC_Completo.xlsx", 
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
             
         except Exception as e:
             st.error(f"Erro ao processar a planilha: {e}")
